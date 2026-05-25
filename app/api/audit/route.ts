@@ -11,7 +11,16 @@ import {
   probeGeminiGenericPromptVisibility,
   type GeminiGeoProbeResponse,
 } from "@/lib/gemini-geo-probe";
+import {
+  probeBlazlyPublishKeywordOpportunities,
+  type PublishKeywordOpportunitiesResponse,
+} from "@/lib/gemini-publish-keywords";
 import { fetchHomepageContentHints } from "@/lib/homepage-hints";
+import {
+  assertBusinessDomainEmail,
+  BusinessEmailError,
+} from "@/lib/business-email";
+import { persistAuditLead } from "@/lib/audit-lead-firestore";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -173,8 +182,23 @@ export async function POST(req: Request) {
     const { email, websiteUrl } = parsed.data;
     const maxPages = parsed.data.maxPages ?? 18;
 
+    try {
+      assertBusinessDomainEmail(email);
+    } catch (e) {
+      if (e instanceof BusinessEmailError) {
+        return NextResponse.json({ error: e.message }, { status: 400 });
+      }
+      throw e;
+    }
+
     const originUrl = normalizeWebsiteInput(websiteUrl);
     const originStr = originUrl.toString();
+
+    void persistAuditLead({
+      email: email.trim(),
+      websiteUrl: websiteUrl.trim(),
+      normalizedWebsiteOrigin: originStr,
+    }).catch((err) => console.error("[audit] Firestore lead save failed:", err));
 
     const [homepageHints, { origin, sitemapSeeds, allPageUrls }] = await Promise.all([
       fetchHomepageContentHints({ origin: originStr }),
@@ -185,15 +209,25 @@ export async function POST(req: Request) {
 
     const hostnameClean = originUrl.hostname.replace(/^www\./i, "");
 
-    const [pages, geoGemini]: [AuditPageRow[], GeminiGeoProbeResponse] =
-      await Promise.all([
-        auditPrioritizedPages(origin, prioritized),
-        probeGeminiGenericPromptVisibility({
-          siteUrl: `${originUrl.protocol}//${originUrl.hostname}/`,
-          hostname: hostnameClean,
-          contentHints: homepageHints,
-        }),
-      ]);
+    const siteUrlCanon = `${originUrl.protocol}//${originUrl.hostname}/`;
+
+    const [pages, geoGemini, publishKeywords]: [
+      AuditPageRow[],
+      GeminiGeoProbeResponse,
+      PublishKeywordOpportunitiesResponse,
+    ] = await Promise.all([
+      auditPrioritizedPages(origin, prioritized),
+      probeGeminiGenericPromptVisibility({
+        siteUrl: siteUrlCanon,
+        hostname: hostnameClean,
+        contentHints: homepageHints,
+      }),
+      probeBlazlyPublishKeywordOpportunities({
+        siteUrl: siteUrlCanon,
+        hostname: hostnameClean,
+        contentHints: homepageHints,
+      }),
+    ]);
 
     return NextResponse.json({
       lead: {
@@ -206,6 +240,7 @@ export async function POST(req: Request) {
         analyzedUrls: pages.length,
       },
       geoGemini,
+      publishKeywords,
       pages,
     });
   } catch (err) {

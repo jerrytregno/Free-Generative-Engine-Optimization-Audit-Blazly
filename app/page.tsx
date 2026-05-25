@@ -5,6 +5,7 @@ import { parseSignals } from "@/app/components/ParsedSignals";
 import { SignalsOverview } from "@/app/components/SignalsOverview";
 import { ScoreBreakdownRibbon } from "@/app/components/ScoreBreakdownRibbon";
 import type { ContentScoreBreakdown } from "@/lib/seo-score";
+import { acceptsBusinessLeadEmail } from "@/lib/business-email";
 
 type FindingSeverity = "critical" | "warning" | "notice";
 
@@ -42,6 +43,15 @@ type AuditResponse = {
         referenced: boolean;
         prompts: Array<{ prompt: string; rationale: string }>;
         summary: string;
+      }
+    | { status: "skipped"; message: string }
+    | { status: "error"; message: string };
+  publishKeywords?:
+    | {
+        status: "ok";
+        summary: string;
+        blogKeywords: Array<{ keyword: string; rationale: string }>;
+        landingKeywords: Array<{ keyword: string; rationale: string }>;
       }
     | { status: "skipped"; message: string }
     | { status: "error"; message: string };
@@ -117,8 +127,18 @@ export default function Home() {
     return aggregatePagesContentScore(result.pages);
   }, [result?.pages]);
 
+  const emailHint = useMemo(() => {
+    const t = email.trim();
+    if (!t.includes("@")) return null;
+    if (!acceptsBusinessLeadEmail(t)) {
+      return "Use your company domain — Gmail, Outlook, Yahoo, iCloud & similar addresses are blocked.";
+    }
+    return null;
+  }, [email]);
+
   const canSubmit = useMemo(
-    () => email.includes("@") && websiteUrl.trim().length > 3,
+    () =>
+      acceptsBusinessLeadEmail(email.trim()) && websiteUrl.trim().length > 3,
     [email, websiteUrl],
   );
 
@@ -182,8 +202,13 @@ export default function Home() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="growth@brand.com"
-                className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-3 text-slate-900 shadow-inner outline-none ring-orange-400/30 transition focus:border-orange-400 focus:bg-white focus:ring-[3px]"
+                className={`mt-2 w-full rounded-xl border bg-slate-50/50 px-4 py-3 text-slate-900 shadow-inner outline-none ring-orange-400/30 transition focus:bg-white focus:ring-[3px] ${emailHint ? "border-amber-300 focus:border-amber-500 focus:ring-amber-400/35" : "border-slate-200 focus:border-orange-400"}`}
               />
+              {emailHint ? (
+                <p className="mt-2 text-xs font-medium leading-snug text-amber-900">
+                  {emailHint}
+                </p>
+              ) : null}
             </div>
             <div className="md:col-span-5">
               <label className="text-sm font-medium text-slate-700">
@@ -241,6 +266,10 @@ export default function Home() {
 
       {result?.geoGemini && !result.error ? (
         <GeminiGeoPanel geo={result.geoGemini} />
+      ) : null}
+
+      {result?.publishKeywords && !result.error ? (
+        <PublishKeywordsPanel data={result.publishKeywords} />
       ) : null}
 
       {result?.pages?.length ? (
@@ -349,6 +378,94 @@ function GeminiGeoPanel({
   );
 }
 
+function PublishKeywordsPanel({
+  data,
+}: {
+  data: NonNullable<AuditResponse["publishKeywords"]>;
+}) {
+  return (
+    <section className="rounded-3xl border border-emerald-200/90 bg-gradient-to-br from-emerald-50/80 via-white to-orange-50/40 p-8 shadow-[0_8px_32px_-20px_rgb(5_122_94/0.18)] ring-1 ring-emerald-100">
+      <h2 className="text-lg font-semibold tracking-tight text-emerald-950 sm:text-xl">
+        Keywords · easier wins with Blazly
+      </h2>
+      <p className="mt-1 text-xs leading-relaxed text-emerald-900/85">
+        Draft blogs and landing pages in Blazly around these intents — illustrative SEO ideas only, not live rankings or keyword volume data.
+      </p>
+      {data.status === "skipped" ? (
+        <p className="mt-4 rounded-xl border border-amber-200/90 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+          {data.message}
+        </p>
+      ) : data.status === "error" ? (
+        <p className="mt-4 rounded-xl border border-rose-200/90 bg-rose-50 px-4 py-3 text-sm text-rose-950">
+          {data.message}
+        </p>
+      ) : (
+        <div className="mt-6 space-y-8">
+          <p className="text-sm font-medium text-emerald-900">{data.summary}</p>
+          {data.blogKeywords.length ? (
+            <div>
+              <h3 className="text-[11px] font-bold uppercase tracking-[0.2em] text-emerald-800/85">
+                Blog topics (organic)
+              </h3>
+              <ul className="mt-4 space-y-3">
+                {data.blogKeywords.map((row, idx) => (
+                  <li
+                    key={`b-${idx}`}
+                    className="rounded-2xl border border-emerald-200/65 bg-white/90 px-4 py-3 shadow-sm"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-900">
+                        Blog
+                      </span>
+                      <p className="min-w-0 flex-1 font-mono text-[13px] font-semibold text-slate-900">
+                        {row.keyword}
+                      </p>
+                    </div>
+                    {row.rationale ? (
+                      <p className="mt-2 text-xs leading-relaxed text-slate-600">
+                        {row.rationale}
+                      </p>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {data.landingKeywords.length ? (
+            <div>
+              <h3 className="text-[11px] font-bold uppercase tracking-[0.2em] text-orange-800/90">
+                Landing pages (conversion intent)
+              </h3>
+              <ul className="mt-4 space-y-3">
+                {data.landingKeywords.map((row, idx) => (
+                  <li
+                    key={`l-${idx}`}
+                    className="rounded-2xl border border-orange-200/70 bg-white/90 px-4 py-3 shadow-sm"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full bg-orange-100 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-orange-900">
+                        Landing
+                      </span>
+                      <p className="min-w-0 flex-1 font-mono text-[13px] font-semibold text-slate-900">
+                        {row.keyword}
+                      </p>
+                    </div>
+                    {row.rationale ? (
+                      <p className="mt-2 text-xs leading-relaxed text-slate-600">
+                        {row.rationale}
+                      </p>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function OverallCombinedScoreCard({
   stats,
   discovery,
@@ -386,7 +503,7 @@ function OverallCombinedScoreCard({
           <p className="mt-2 max-w-xl text-sm leading-relaxed text-slate-600">
             The headline score averages each page&apos;s content rubric below. Drill into URLs to chase weak titles, snippets, headings, thin copy, or missing alt descriptions.
           </p>
-          <dl className="mt-8 grid gap-4 sm:grid-cols-3">
+          <dl className="mt-8 grid gap-4 sm:grid-cols-2">
             <div className="rounded-2xl border border-slate-100 bg-slate-50/80 px-4 py-5">
               <dt className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
                 Pages scored
@@ -407,17 +524,6 @@ function OverallCombinedScoreCard({
               </dd>
               <span className="mt-2 block text-xs leading-snug text-slate-500">
                 Returned usable HTML prose
-              </span>
-            </div>
-            <div className="rounded-2xl border border-slate-100 bg-slate-50/80 px-4 py-5">
-              <dt className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
-                Min · max
-              </dt>
-              <dd className="mt-2 text-2xl font-semibold tabular-nums text-slate-900">
-                {stats.min} · {stats.max}
-              </dd>
-              <span className="mt-2 block text-xs leading-snug text-slate-500">
-                Spread across scored URLs
               </span>
             </div>
           </dl>
